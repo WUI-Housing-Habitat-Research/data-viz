@@ -1,0 +1,428 @@
+---
+title: "Survey WUI integration"
+---
+
+Import relevant libraries
+```{r}
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(nngeo)
+```
+
+Read in survey address coordinates
+```{r}
+survey_xy <- read_csv("data/survey/survey_coords.csv")
+```
+
+Let's subset the data into three dataframes. We'll need to do this to project
+the coordinates for current, previous, and work addresses. We'll merge the
+matching observations back together at the end, ending up with three separate
+SF objects (current addresses, current + previous addresses, and current 
++ work addresses).
+
+```{r}
+curr_xy <- survey_xy %>%
+  select(id, c_partial, curr_lat, curr_lon) 
+
+#Get only complete cases because we can't project NA values
+curr_xy <- curr_xy[complete.cases(curr_xy), ]
+
+prev_xy <- survey_xy %>%
+  select(id, p_partial, prev_lat, prev_lon)
+
+prev_xy <- prev_xy[complete.cases(prev_xy), ]
+
+work_xy <- survey_xy %>%
+  select(id, w_partial, work_lat, work_lon)
+
+work_xy <- work_xy[complete.cases(work_xy), ]
+```
+
+Convert coordinates df into sf objects
+```{r}
+c_points <- st_as_sf(curr_xy, coords = c('curr_lon', 'curr_lat'), crs = 4326)
+p_points <- st_as_sf(prev_xy, coords = c('prev_lon', 'prev_lat'), crs = 4326)
+w_points <- st_as_sf(work_xy, coords = c('work_lon', 'work_lat'), crs = 4326)
+```
+
+Import necessary polygon datasets
+```{r}
+counties <- st_read("data/shapes/4county_boundaries.shp")
+places <- st_read("data/shapes/4county_places.shp")
+wui_bg <- st_read("data/shapes/wui_bg_demos1.geojson")
+wui_blks <- st_read("data/shapes/all_blocks_wui_demo1.geojson")
+```
+
+Project our survey points into the same coordinate system as our polygons
+```{r}
+c_points <- st_transform(c_points, st_crs(counties))
+st_crs(c_points) == st_crs(counties)
+
+p_points <- st_transform(p_points, st_crs(counties))
+st_crs(p_points) == st_crs(counties)
+
+w_points <- st_transform(w_points, st_crs(counties))
+st_crs(w_points) == st_crs(counties)
+```
+
+## Join counties to points
+
+Let's join points to counties. This will tell us which points are assigned to
+which counties, but it won't tell us the distance between the points and 
+counties, which is necessary for us to know how many survey respondents lived 
+inside versus outside a county.
+
+First, let's reduce the number of variables in our county object to GEOID and
+county name
+```{r}
+counties1 <- counties %>%
+  rename(county_fips = GEOID,
+         county = NAME) %>%
+  select(county_fips, county)
+```
+
+Join our counties to our points
+```{r}
+county_to_c_point <- st_join(c_points, counties1, join = st_nn, k=1)
+county_to_p_point <- st_join(p_points, counties1, join = st_nn, k=1)
+county_to_w_point <- st_join(w_points, counties1, join = st_nn, k=1)
+```
+Now let's get our distances
+```{r}
+c_cnty_n = st_nn(c_points, counties, k=1, returnDist = TRUE)
+c_cnty_dist = sapply(c_cnty_n[[2]], "[", 1)
+
+p_cnty_n = st_nn(p_points, counties, k=1, returnDist = TRUE)
+p_cnty_dist = sapply(p_cnty_n[[2]], "[", 1)
+
+w_cnty_n = st_nn(w_points, counties, k=1, returnDist = TRUE)
+w_cnty_dist = sapply(w_cnty_n[[2]], "[", 1)
+
+c_cnty_dist
+```
+
+Now lets incorporate our distances to our county data
+```{r}
+county_to_c_point$c_cnty_dist = c_cnty_dist
+county_to_p_point$p_cnty_dist = p_cnty_dist
+county_to_w_point$w_cnty_dist = w_cnty_dist
+```
+
+Now let's create a text column that will, if the respondent lives INSIDE a 
+county, will return the name of that county, and if the respondent lives OUTSIDE
+a county, will return "X km from Y county".
+
+```{r}
+county_to_c_point1 <- county_to_c_point %>%
+  mutate(c_inside_cnty = case_when(c_cnty_dist == 0 ~ "Yes",
+                                 c_cnty_dist > 0 ~ paste(round(c_cnty_dist/1000, digits = 1), "km from ", county, sep = ""),
+                                 TRUE ~ "ERROR"))
+
+county_to_p_point1 <- county_to_p_point %>%
+  mutate(p_inside_cnty = case_when(p_cnty_dist == 0 ~ "Yes",
+                                 p_cnty_dist > 0 ~ paste(round(p_cnty_dist/1000, digits = 1), "km from ", county, sep = ""),
+                                 TRUE ~ "ERROR"))
+
+county_to_w_point1 <- county_to_w_point %>%
+  mutate(w_inside_cnty = case_when(w_cnty_dist == 0 ~ "Yes",
+                                 w_cnty_dist > 0 ~ paste(round(w_cnty_dist/1000, digits = 1), "km from ", county, sep = ""),
+                                 TRUE ~ "ERROR"))
+```
+
+## Join places to points
+
+Let's shave down our places object to just place names and their FIPS codes
+```{r}
+places1 <- places %>%
+  rename(pl_fips = GEOID,
+         place = NAMELSAD) %>%
+  select(pl_fips, place)
+```
+
+Let's join points to places. This will tell us which points are assigned to
+which places, but it won't tell us the distance between the points and places,
+which is necessary for us to know how many survey respondents lived inside 
+versus outside a place.
+```{r}
+places_to_c_point <- st_join(county_to_c_point1, places1, join = st_nn, k=1)
+places_to_p_point <- st_join(county_to_p_point1, places1, join = st_nn, k=1)
+places_to_w_point <- st_join(county_to_w_point1, places1, join = st_nn, k=1)
+```
+
+Now let's get our place distances
+```{r}
+c_pl_n = st_nn(places_to_c_point, places1, k=1, returnDist = TRUE)
+c_pl_dist = sapply(c_pl_n[[2]], "[", 1)
+
+
+p_pl_n = st_nn(places_to_p_point, places1, k=1, returnDist = TRUE)
+p_pl_dist = sapply(p_pl_n[[2]], "[", 1)
+
+
+w_pl_n = st_nn(places_to_w_point, places1, k=1, returnDist = TRUE)
+w_pl_dist = sapply(w_pl_n[[2]], "[", 1)
+
+c_pl_dist
+```
+
+Now lets bind our distances to our place data
+```{r}
+places_to_c_point$c_pl_dist = c_pl_dist
+places_to_p_point$p_pl_dist = p_pl_dist
+places_to_w_point$w_pl_dist = w_pl_dist
+```
+
+Now let's create a text column that will, if the respondent lives INSIDE a place,
+will return the name of that place, and if the respondent lives OUTSIDE a place,
+will return "Unincorporated near place name".
+
+```{r}
+places_to_c_point1 <- places_to_c_point %>%
+  mutate(c_pl_res = case_when(c_pl_dist == 0 ~ place,
+                            c_pl_dist > 0 ~ paste("Unincorporated near ", 
+                                                place, sep = ""),
+                            TRUE ~ "ERROR"))
+
+places_to_p_point1 <- places_to_p_point %>%
+  mutate(p_pl_res = case_when(p_pl_dist == 0 ~ place,
+                            p_pl_dist > 0 ~ paste("Unincorporated near ", 
+                                                place, sep = ""),
+                            TRUE ~ "ERROR"))
+
+places_to_w_point1 <- places_to_w_point %>%
+  mutate(pl_work = case_when(w_pl_dist == 0 ~ place,
+                            w_pl_dist > 0 ~ paste("Unincorporated near ", 
+                                                place, sep = ""),
+                            TRUE ~ "ERROR"))
+
+```
+
+## Join WUI status to points (Block)
+
+Here, we want to determine whether a respondent lives, previously lives,
+or works in the WUI or not. To do this, let's create an sf object with 
+five variables: whether the block was in the WUI in 2020, whether the block was 
+intermix in 2020, whether the block was interface in 2020, whether the block was
+new WUI (extensive growth) in 2020, and block ID. We'll merge those variables 
+into our datasets of surveyor locations
+
+```{r}
+wui_status20 <- wui_blks %>%
+  select(BLK20, wui20, intermix20, interfac20, wui_new20)
+```
+
+Let's join points to blocks. This will tell us which points are assigned to
+which blocks and their associated WUI status.
+```{r}
+places_to_c_point2 <- st_join(places_to_c_point1, wui_status20)
+places_to_p_point2 <- st_join(places_to_p_point1, wui_status20)
+places_to_w_point2 <- st_join(places_to_w_point1, wui_status20)
+```
+
+## Join growth WUI status to points (Block Group)
+
+Here, we will use block group data to understand whether a survey respondent
+lives in an area of intensifying WUI growth. We're using the block group because
+it is difficult to trust housing unit growth data at the block level. However,
+we have to establish thresholds: how do we decide what block groups are part of
+the WUI? Do we use WUI area or WUI housing units as the criteria? What are the
+thresholds we might use for each? And what is the threshold for housing
+density growth that classifies a WUI block group as experiencing intensifying
+growth?
+
+For now, let's say WUI block groups are blocks where 50% or more of the housing
+units are in the WUI. This is a more liberal definition than one based on area.
+For example, this definition classifies more block groups as part of the WUI 
+than one that defines the as block groups where 25% of more of the area is part
+of the WUI. 
+
+Let's define intensification along two criteria: housing density growth
+and population density growth. We'll break those each up into two thresholds:
+light growth and heavy growth. The respective thresholds for each will be five
+percent and ten percent.
+
+Let's create indicator variables to tell us:
+1. Whether a block group is part of the WUI based on our 50% of housing units
+criteria.
+2. Whether a block group experienced at least 5% growth in housing units from
+2010-2020 (light intensification).
+3. Whether a block group experienced at least 10% growth in housing units from
+2010-2020 (heavy intensification)
+4. Whether a block group experienced at least 5% growth in population density
+from 2010-2020 (light intensification).
+5 Whether a block group experienced at least 10% growth in population density
+from 2010-2020 (heavy intensification).
+
+And then we will subset our data down to relevant columns to be joined to the
+point data.
+```{r}
+wui_bg1 <- wui_bg %>%
+  mutate(wui_bg = case_when(p_nw_hu20 < 50 ~ 1,
+                            TRUE ~ 0),
+         lint_hu = case_when(pc_hu_den10_20 >= 5 ~ 1,
+                             TRUE ~ 0),
+         hint_hu = case_when(pc_hu_den10_20 >= 10 ~ 1,
+                             TRUE ~ 0),
+         lint_pop = case_when(pc_pop_den10_20 >= 5 ~ 1,
+                              TRUE ~ 0),
+         hint_pop = case_when(pc_pop_den10_20 >= 10 ~ 1,
+                              TRUE ~ 0)) %>%
+  select(bg_id, wui_bg, lint_hu, hint_hu, lint_pop, hint_pop)
+```
+
+Now let's do a spatial join to match block groups to our survey respondents.
+```{r}
+bg_to_c_point <- st_join(places_to_c_point2, wui_bg1)
+bg_to_p_point <- st_join(places_to_p_point2, wui_bg1)
+bg_to_w_point <- st_join(places_to_w_point2, wui_bg1)
+```
+
+Now let's join our current address data to our previous address data, and then
+those joined addresses to the work addresses. We want three sf objects:
+1. Current addresses
+2. Current addresses + previous addresses (only observations with a previous
+address)
+3. Current addresses + previous addresses + work addresses (only observations
+with a work address)
+
+First, we need to rename variables in previous and work addresses to avoid
+duplicate variables after the merge
+```{r}
+c_addresses <- bg_to_c_point
+
+p_addresses <- bg_to_p_point %>%
+  rename(p_county_fips = county_fips,
+         p_county = county,
+         p_pl_fips = pl_fips,
+         p_place = place,
+         p_BLK20 = BLK20,
+         p_wui20 = wui20,
+         p_intermix20 = intermix20,
+         p_interfac20 = interfac20,
+         p_wui_new20 = wui_new20,
+         p_bg_id = bg_id,
+         p_wui_bg = wui_bg,
+         p_lint_hu = lint_hu,
+         p_hint_hu = hint_hu,
+         p_lint_pop = lint_pop,
+         p_hint_pop = hint_pop
+  )
+
+w_addresses <- bg_to_w_point %>%
+  rename(w_county_fips = county_fips,
+         w_county = county,
+         w_pl_fips = pl_fips,
+         w_place = place,
+         w_BLK20 = BLK20,
+         w_wui20 = wui20,
+         w_intermix20 = intermix20,
+         w_interfac20 = interfac20,
+         w_wui_new20 = wui_new20,
+         w_bg_id = bg_id,
+         w_wui_bg = wui_bg,
+         w_lint_hu = lint_hu,
+         w_hint_hu = hint_hu,
+         w_lint_pop = lint_pop,
+         w_hint_pop = hint_pop
+  )
+
+```
+
+Now let's join current addresses to previous addresses and current
+addresses to work addresses.
+```{r}
+cp_addresses <- inner_join(p_addresses, as.data.frame(c_addresses), by = 'id')
+cw_addresses <- inner_join(w_addresses, as.data.frame(c_addresses), by = 'id')
+```
+
+# Aggregate to block, block group, and place
+
+So we have data for survey respondents at the point level. Now we want to
+aggregate that data up to the block, block group and place scales so that we 
+can do choropleth mapping.
+
+Aggregate to block, block group, and places. For now we'll just do current
+addresses.
+
+```{r}
+point_to_blk <- c_addresses %>%
+  group_by(BLK20) %>%
+  summarize(n = n()) %>%
+  st_drop_geometry()
+
+point_to_bg <- c_addresses %>%
+  group_by(bg_id) %>%
+  summarize(n = n()) %>%
+  st_drop_geometry()
+
+point_to_pl <- c_addresses %>%
+  filter(c_inside_cnty == "Yes") %>%
+  group_by(place) %>%
+  summarize(n = n()) %>%
+  st_drop_geometry()
+```
+
+Group identical WUI blocks together so that we don't have multiple matches to a
+single block when we join (many WUI blocks are partial).
+```{r}
+wui_blk_consol <- wui_status20 %>%
+  group_by(BLK20) %>%
+  summarize(blk_frags = n())
+```
+
+
+```{r}
+point_to_blk1 <- inner_join(wui_blk_consol, point_to_blk, by = "BLK20")
+point_to_bg1 <- inner_join(wui_bg1, point_to_bg, by = "bg_id")
+point_to_pl1 <- inner_join(places1, point_to_pl, by = "place")
+```
+
+Now let's save our points and each of our polygon files as geojson.
+```{r}
+st_write(c_addresses, "data/shapes/current_addresses_07-18-24.geojson")
+st_write(cp_addresses, "data/shapes/previous_addresses_07-18-24.geojson")
+st_write(cw_addresses, "data/shapes/work_addresses_07-18-24.geojson")
+st_write(point_to_blk1, "data/shapes/survey_blk_07-18-24.geojson")
+st_write(point_to_bg1, "data/shapes/survey_bg_07-18-24.geojson")
+st_write(point_to_pl1, "data/shapes/survey_pl_07-18-24.geojson")
+```
+
+Let's also take each of our address files, select variables to keep, drop the
+geometry, and save them as CSV. These should go back into the main survey 
+dataset being worked on.
+```{r}
+c_addresses1 <- c_addresses %>%
+  select(id, c_partial, county, c_cnty_dist, c_inside_cnty, place, c_pl_dist, 
+         c_pl_res, wui20, intermix20, interfac20, wui_new20, wui_bg, lint_hu,
+         hint_hu, lint_pop, hint_pop) %>%
+  st_drop_geometry()
+
+cp_addresses1 <- cp_addresses %>%
+  select(id, p_partial, p_county, p_cnty_dist, p_inside_cnty, p_place, p_pl_dist, 
+         p_pl_res, p_wui20, p_intermix20, p_interfac20, p_wui_new20, p_wui_bg, p_lint_hu,
+         p_hint_hu, p_lint_pop, p_hint_pop) %>%
+  st_drop_geometry()
+
+cw_addresses1 <- cw_addresses %>%
+  select(id, w_partial, w_county, w_cnty_dist, w_inside_cnty, w_place, w_pl_dist, 
+         pl_work, w_wui20, w_intermix20, w_interfac20, w_wui_new20, w_wui_bg, w_lint_hu,
+         w_hint_hu, w_lint_pop, w_hint_pop) %>%
+  st_drop_geometry()
+```
+
+
+Save each address file as CSV (these need work though)
+```{r}
+write_csv(c_addresses1, "data/survey/curr_add_wui.csv")
+write_csv(cp_addresses1, "data/survey/prev_add_wui.csv")
+write_csv(cw_addresses1, "data/survey/work_add_wui.csv")
+```
+
+
+Check out from statistics at various geographies using group_by.
+```{r}
+c_addresses1 %>%
+  group_by(c_pl_res) %>%
+  summarize(n = n())
+```

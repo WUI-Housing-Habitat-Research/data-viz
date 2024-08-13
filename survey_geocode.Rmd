@@ -1,0 +1,194 @@
+---
+title: "Survey Geocode"
+---
+
+The purpose of this file is to geocode addresses provided by survey respondents
+in the WUI survey. Addresses include the respondent's current address,
+previous address, and work address. 
+
+Load relevant libraries
+```{r}
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(tidygeocoder)
+library(readr)
+```
+
+Import files for current, previous, and work addresses and delete rows that
+are entirely NA
+```{r}
+curr_add <- read_csv("data/survey/current_addresses.csv")
+curr_add <- curr_add[rowSums(is.na(curr_add)) < ncol(curr_add), ]
+
+prev_add <- read_csv("data/survey/previous_addresses.csv")
+prev_add <- prev_add[rowSums(is.na(prev_add)) < ncol(prev_add), ]
+
+work_add <- read_csv("data/survey/work_addresses.csv")
+work_add <- work_add[rowSums(is.na(work_add)) < ncol(work_add), ]
+```
+
+Each respondent has a global ID. Let's use this ID to merge the three address
+datasets together so that we don't have to deal with three separate dataframes.
+
+```{r}
+# Join work address and previous address
+all_add <- left_join(curr_add, prev_add, by = "id")
+
+# Join work and previous addresses to work addresses
+all_add <- left_join(all_add, work_add, by = "id")
+```
+
+Before we geocode, we want an indicator variable for each address that says
+whether or not an address is a partial address. This is important because when
+presenting the locations of survey respondents, we want to know the degree of
+spatial uncertainty we're working with. An address will be marked as partial if
+it's missing street information AND it's missing XY coordinates from the 
+respondent dropping a pin in their location. This will not account for 
+addresses, however, that have a street name but no address number.
+```{r}
+all_add1 <- all_add %>%
+  mutate(c_partial = case_when(is.na(current_address) & (is.na(current_lat) | 
+                                                        is.na(current_lon)) ~ 1,
+                               TRUE ~ 0),
+         p_partial = case_when(is.na(prev_address) & (is.na(prev_lat) | 
+                                                     is.na(prev_lon)) ~ 1,
+                               TRUE ~ 0),
+         w_partial = case_when(is.na(work_address) ~ 1,
+                               TRUE ~ 0)
+  )
+```
+
+It appears that Open Street Map does a better job of geocoding partial addresses
+when they're in a single line address format than it does with combining
+components of an address together, so let's put all three addresses on a single
+line.
+
+```{r}
+all_add2 <- all_add1 %>% 
+  unite("curr_sla", c(current_address, current_city, current_state), 
+        sep=", ", remove = FALSE, na.rm = TRUE) %>%
+  unite("curr_slaz", c(curr_sla, current_zip), 
+        sep=" ", remove = FALSE, na.rm = TRUE) %>%
+  unite("prev_sla", c(prev_address, prev_city, prev_state), 
+        sep=", ", remove = FALSE, na.rm = TRUE) %>%
+  unite("prev_slaz", c(prev_sla, prev_zip), 
+        sep=" ", remove = FALSE, na.rm = TRUE) %>%
+  unite("work_sla", c(work_address, work_city), 
+        sep=", ", remove = FALSE, na.rm = TRUE) %>%
+  unite("work_slaz", c(work_sla, work_zip), 
+        sep=" ", remove = FALSE, na.rm = TRUE)
+```
+
+Now, let's geocode the current addresses. We'll ask the census to geocode each
+address, and for the addresses that the census can't geocode, we'll ask Open
+Street Map.
+
+```{r}
+# Go back and try this with a single dataframe with piping
+gc1 <- all_add2 %>%
+  geocode_combine(
+    queries = list(
+      list(method = 'census'),
+      list(method = 'osm')
+    ),
+    global_params = list(address = 'curr_slaz'),
+    lat = "cgc_lat",
+    lon = "cgc_lon") %>%
+  rename(c_query = query)
+
+gc2 <- gc1 %>%
+  geocode_combine(
+    queries = list(
+      list(method = 'census'),
+      list(method = 'osm')
+    ),
+    global_params = list(address = 'prev_slaz'),
+    lat = "pgc_lat",
+    lon = "pgc_lon") %>%
+  rename(p_query = query)
+  
+gc3 <- gc2 %>%
+  geocode_combine(
+    queries = list(
+      list(method = 'census'),
+      list(method = 'osm')
+    ),
+    global_params = list(address = 'work_slaz'),
+    lat = "wgc_lat",
+    lon = "wgc_lon") %>%
+  rename(w_query = query)
+```
+
+Let's save a copy of gc3 so that the survey team can review the addresses 
+that didn't geocode.
+```{r}
+write_csv(gc3, "data/survey/geocode07-18-24.csv")
+```
+
+So the last thing to do here is create final coordinates columns for current,
+previous, and work addresses. There are two options for the coordinates to put
+in this column: the geocoded coordinates or, if the respondent told us their
+location by dropping a pin in the map, the coordinates the respondent gave us.
+
+This is the logic we want to follow:
+
+1. If respondent provided a complete address, use the geocoded coordinates
+(including if the respondent dropped a pin)
+2. If the respondent did not provide a complete address but dropped a pin, use
+the pin coordinates.
+3. If the respondent provided a complete address and dropped a pin, but we couldn't
+geocode the complete address, use the pin coordinates.
+4. If the respondent did not provide a complete address and did not drop a pin,
+but we were able to geocode the incomplete address, use the geocoded coordinates
+
+```{r}
+gc4 <- gc3 %>%
+  mutate(cc_lat = case_when(c_partial == 0 & is.na(cgc_lat) == FALSE ~ cgc_lat,
+                            c_partial == 1 & is.na(current_lat) == FALSE ~ current_lat,
+                            c_partial == 0 & is.na(cgc_lat) == TRUE & is.na(current_lat) == FALSE ~ current_lat,
+                            c_partial == 1 & is.na(current_lat) == TRUE & is.na(cgc_lat) == FALSE ~ cgc_lat,
+                            TRUE ~ NA),
+         cc_lon = case_when(c_partial == 0 & is.na(cgc_lon) == FALSE ~ cgc_lon,
+                            c_partial == 1 & is.na(current_lon) == FALSE ~ current_lon,
+                            c_partial == 0 & is.na(cgc_lon) == TRUE & is.na(current_lon) == FALSE ~ current_lon,
+                            c_partial == 1 & is.na(current_lon) == TRUE & is.na(cgc_lon) == FALSE ~ cgc_lon,
+                            TRUE ~ NA),
+         cp_lat = case_when(p_partial == 0 & is.na(pgc_lat) == FALSE ~ pgc_lat,
+                            p_partial == 1 & is.na(prev_lat) == FALSE ~ prev_lat,
+                            p_partial == 0 & is.na(pgc_lat) == TRUE & is.na(prev_lat) == FALSE ~ prev_lat,
+                            p_partial == 1 & is.na(prev_lat) == TRUE & is.na(pgc_lat) == FALSE ~ pgc_lat,
+                            TRUE ~ NA),
+         cp_lon = case_when(p_partial == 0 & is.na(pgc_lon) == FALSE ~ pgc_lon,
+                            p_partial == 1 & is.na(prev_lon) == FALSE ~ prev_lon,
+                            p_partial == 0 & is.na(pgc_lon) == TRUE & is.na(prev_lon) == FALSE ~ prev_lon,
+                            p_partial == 1 & is.na(prev_lon) == TRUE & is.na(pgc_lon) == FALSE ~ pgc_lon,
+                            TRUE ~ NA),
+         cw_lat = case_when(is.na(wgc_lat) == FALSE ~ wgc_lat, # We don't have pin drops for work addresses
+                            TRUE ~ NA),
+         cw_lon = case_when(is.na(wgc_lon) == FALSE ~ wgc_lon,
+                            TRUE ~ NA)
+  )
+  
+```
+
+Now we just want to wittle down out dataframe to variables we need to integrate
+with WUI data in a different .Rmd file
+```{r}
+gc5 <- gc4 %>%
+  select(id, c_partial, p_partial, w_partial, cc_lat, cc_lon, cp_lat, cp_lon,
+         cw_lat, cw_lon) %>%
+  rename(curr_lat = cc_lat,
+         curr_lon = cc_lon,
+         prev_lat = cp_lat,
+         prev_lon = cp_lon,
+         work_lat = cw_lat,
+         work_lon = cw_lon)
+```
+
+
+Now let's save this as a CSV for later use.
+```{r}
+write_csv(gc5, "data/survey/survey_coords.csv")
+```
+
