@@ -9,6 +9,7 @@ previous address, and work address.
 Load relevant libraries
 ```{r}
 library(dplyr)
+library(tidyr)
 library(sf)
 library(ggplot2)
 library(tidygeocoder)
@@ -28,33 +29,166 @@ work_add <- read_csv("data/survey/work_addresses.csv")
 work_add <- work_add[rowSums(is.na(work_add)) < ncol(work_add), ]
 ```
 
+Our current address file has location information for where all respondents
+currently live, and it has location information for where **some** respondents
+previously lived, and where they currently work. The previous and work address
+files have that address information for other respondents.
+
 Each respondent has a global ID. Let's use this ID to merge the three address
-datasets together so that we don't have to deal with three separate dataframes.
+datasets together so that we don't have to deal with three separate data frames.
 
 ```{r}
 # Join work address and previous address
-all_add <- left_join(curr_add, prev_add, by = "id")
+all_add <- left_join(curr_add, prev_add, by = "ParentGlobalID")
 
 # Join work and previous addresses to work addresses
-all_add <- left_join(all_add, work_add, by = "id")
+all_add <- left_join(all_add, work_add, by = "ParentGlobalID")
 ```
+
+Previous and work addresses that start with "m_" came from the current address
+data frame, and those start with "m2_" came from the previous or work address
+sheet. Let's combine the "m_" and "m2_" addresses into single columns to work
+with.
+
+```{r}
+all_add1 <- all_add %>%
+  mutate(prev_adr = case_when(!is.na(m_prev_adr) & is.na(m2_prev_adr) ~ m_prev_adr,
+                              is.na(m_prev_adr) & !is.na(m2_prev_adr) ~ m2_prev_adr,
+                              m_prev_adr == m2_prev_adr ~ m_prev_adr,
+                              !is.na(m_prev_adr) & !is.na(m2_prev_adr) & 
+                                m_prev_adr != m2_prev_adr ~ "CONFLICT",
+                              TRUE ~ NA),
+         prev_cpn = case_when(!is.na(m_prev_cpn) & is.na(m2_prev_cpn) ~ m_prev_cpn,
+                              is.na(m_prev_cpn) & !is.na(m2_prev_cpn) ~ m2_prev_cpn,
+                              m_prev_cpn == m2_prev_cpn ~ m_prev_cpn,
+                              !is.na(m_prev_cpn) & !is.na(m2_prev_cpn) & 
+                                m_prev_cpn != m2_prev_cpn ~ "CONFLICT",
+                              TRUE ~ NA),
+         prev_zip = case_when(!is.na(m_prev_zip) & is.na(m2_prev_zip) ~ m_prev_zip,
+                              is.na(m_prev_zip) & !is.na(m2_prev_zip) ~ m2_prev_zip,
+                              m_prev_zip == m2_prev_zip ~ m_prev_zip,
+                              !is.na(m_prev_zip) & !is.na(m2_prev_zip) & 
+                                m_prev_zip != m2_prev_zip ~ 99999,
+                              TRUE ~ NA),
+         prev_state = case_when(!is.na(m_prev_state) & is.na(m2_prev_state) ~ m_prev_state,
+                              is.na(m_prev_state) & !is.na(m2_prev_state) ~ m2_prev_state,
+                              m_prev_state == m2_prev_state ~ m_prev_state,
+                              !is.na(m_prev_state) & !is.na(m2_prev_state) & 
+                                m_prev_state != m2_prev_state ~ "CONFLICT",
+                              TRUE ~ NA),
+         prev_cntry = case_when(!is.na(m_prev_cntry) & is.na(m2_prev_cntry) ~ m_prev_cntry,
+                              is.na(m_prev_cntry) & !is.na(m2_prev_cntry) ~ m2_prev_cntry,
+                              m_prev_cntry == m2_prev_cntry ~ m_prev_cntry,
+                              !is.na(m_prev_cntry) & !is.na(m2_prev_cntry) & 
+                                m_prev_cntry != m2_prev_cntry ~ "CONFLICT",
+                              TRUE ~ NA),
+         prev_lat = case_when(!is.na(m_prev_LAT) & is.na(m2_prev_LAT) ~ m_prev_LAT,
+                            is.na(m_prev_LAT) & !is.na(m2_prev_LAT) ~ m2_prev_LAT,
+                            m_prev_LAT == m2_prev_LAT ~ m_prev_LAT,
+                           !is.na(m_prev_LAT) & !is.na(m2_prev_LAT) & 
+                               m_prev_LAT != m2_prev_LAT &
+                               (m_prev_LAT - m2_prev_LAT <= .01) #keep m2 if the difference is small
+                                & (m_prev_LAT - m2_prev_LAT >= -.01) ~ m2_prev_LAT,
+                            !is.na(m_prev_LAT) & !is.na(m2_prev_LAT) & 
+                               m_prev_LAT != m2_prev_LAT &
+                               (m_prev_LAT - m2_prev_LAT >= .01) #conflict if the difference is > .01
+                                & (m_prev_LAT - m2_prev_LAT <= -.01) ~ 99999,
+                            TRUE ~ NA),
+         prev_long = case_when(!is.na(m_prev_LONG) & is.na(m2_prev_LONG) ~ m_prev_LONG,
+                            is.na(m_prev_LONG) & !is.na(m2_prev_LONG) ~ m2_prev_LONG,
+                            m_prev_LONG == m2_prev_LONG ~ m_prev_LONG,
+                            !is.na(m_prev_LONG) & !is.na(m2_prev_LONG) & 
+                               m_prev_LONG != m2_prev_LONG &
+                               (m_prev_LONG - m2_prev_LONG <= .01) #keep m2 if the difference is small
+                                & (m_prev_LONG - m2_prev_LONG >= -.01) ~ m2_prev_LONG,
+                            !is.na(m_prev_LONG) & !is.na(m2_prev_LONG) & 
+                               m_prev_LONG != m2_prev_LONG &
+                               (m_prev_LONG - m2_prev_LONG >= .01) #conflict if the difference is > .01
+                                & (m_prev_LONG - m2_prev_LONG <= -.01) ~ 99999,
+                            TRUE ~ NA),
+         work_adr = case_when(!is.na(m_w_adr) & is.na(m2_work_adr) ~ m_w_adr,
+                              is.na(m_w_adr) & !is.na(m2_work_adr) ~ m2_work_adr,
+                              m_w_adr == m2_work_adr ~ m_w_adr,
+                              !is.na(m_w_adr) & !is.na(m2_work_adr) & 
+                                m_w_adr != m2_work_adr ~ "CONFLICT",
+                              TRUE ~ NA),
+         work_cpn = case_when(!is.na(m_w_cpn) & is.na(m2_work_cpn) ~ m_w_cpn,
+                              is.na(m_w_cpn) & !is.na(m2_work_cpn) ~ m2_work_cpn,
+                              m_w_cpn == m2_work_cpn ~ m_w_cpn,
+                              !is.na(m_w_cpn) & !is.na(m2_work_cpn) & 
+                                m_w_cpn != m2_work_cpn ~ "CONFLICT",
+                              TRUE ~ NA),
+         work_zip = case_when(!is.na(m_w_zip) & is.na(m2_work_zip) ~ m_w_zip,
+                              is.na(m_w_zip) & !is.na(m2_work_zip) ~ as.numeric(m2_work_zip),
+                              m_w_zip == as.numeric(m2_work_zip) ~ m_w_zip,
+                              !is.na(m_w_zip) & !is.na(m2_work_zip) & 
+                                m_w_zip != as.numeric(m2_work_zip) ~ 99999,
+                              TRUE ~ NA),
+         work_state = case_when(!is.na(m_w_state) & is.na(m2_work_state) ~ m_w_state,
+                              is.na(m_w_state) & !is.na(m2_work_state) ~ m2_work_state,
+                              m_w_state == m2_work_state ~ m_w_state,
+                              !is.na(m_w_state) & !is.na(m2_work_state) & 
+                                m_w_state != m2_work_state ~ "CONFLICT",
+                              TRUE ~ NA),
+         work_cntry = m2_work_cntry, #No country value in the "m_w" set of vars
+         work_lat = case_when(!is.na(m_w_LAT) & is.na(m2_work_LAT) ~ m_w_LAT,
+                            is.na(m_w_LAT) & !is.na(m2_work_LAT) ~ m2_work_LAT,
+                            m_w_LAT == m2_work_LAT ~ m_w_LAT,
+                            !is.na(m_w_LAT) & !is.na(m2_work_LAT) & 
+                               m_w_LAT != m2_work_LAT &
+                               (m_w_LAT - m2_work_LAT <= .01) #keep m2 if the difference is small
+                                & (m_w_LAT - m2_work_LAT >= -.01) ~ m2_work_LAT,
+                           !is.na(m_w_LAT) & !is.na(m2_work_LAT) & 
+                               m_w_LAT != m2_work_LAT &
+                               (m_w_LAT - m2_work_LAT >= .01) #conflict if the difference is > .01
+                                & (m_w_LAT - m2_work_LAT <= -.01) ~ 99999,
+                            TRUE ~ NA),
+         work_long = case_when(!is.na(m_w_LONG) & is.na(m2_work_LONG) ~ m_w_LONG,
+                            is.na(m_w_LONG) & !is.na(m2_work_LONG) ~ m2_work_LONG,
+                            m_w_LONG == m2_work_LONG ~ m_w_LONG,
+                            !is.na(m_w_LONG) & !is.na(m2_work_LONG) & 
+                               m_w_LONG != m2_work_LONG &
+                               (m_w_LONG - m2_work_LONG <= .01) #keep m2 if the difference is small
+                                & (m_w_LONG - m2_work_LONG >= -.01) ~ m2_work_LONG,
+                           !is.na(m_w_LONG) & !is.na(m2_work_LONG) & 
+                               m_w_LONG != m2_work_LONG &
+                               (m_w_LONG - m2_work_LONG >= .01) #conflict if the difference is > .01
+                                & (m_w_LONG - m2_work_LONG <= -.01) ~ 99999,
+                            TRUE ~ NA),
+         
+         )
+
+```
+
 
 Before we geocode, we want an indicator variable for each address that says
 whether or not an address is a partial address. This is important because when
 presenting the locations of survey respondents, we want to know the degree of
 spatial uncertainty we're working with. An address will be marked as partial if
-it's missing street information AND it's missing XY coordinates from the 
-respondent dropping a pin in their location. This will not account for 
-addresses, however, that have a street name but no address number.
+it's missing street information AND it's 1) missing XY coordinates from the 
+respondent dropping a pin in their location or 2) missing XY coordinates manually
+filled in from the survey team, which generally occurs when a respondent puts in
+a street name but not an address number. This will not account for addresses, 
+however, that have a street name but no address number.
 ```{r}
-all_add1 <- all_add %>%
-  mutate(c_partial = case_when(is.na(current_address) & (is.na(current_lat) | 
-                                                        is.na(current_lon)) ~ 1,
+all_add2 <- all_add1 %>%
+  mutate(c_partial = case_when(is.na(m_CURR_ADR) & ((is.na(m_CURR_LAT) | 
+                                                     is.na(m_CURR_LONG)) &
+                                                    (is.na(p_CURR_LAT) |
+                                                     is.na(p_CURR_LONG))
+                                                    ) ~ 1,
                                TRUE ~ 0),
-         p_partial = case_when(is.na(prev_address) & (is.na(prev_lat) | 
-                                                     is.na(prev_lon)) ~ 1,
+         p_partial = case_when(is.na(prev_adr) & ((is.na(prev_lat) | 
+                                                     is.na(prev_long)) &
+                                                    (is.na(p_prev_LAT) |
+                                                     is.na(p_prev_LONG))
+                                                    ) ~ 1,
                                TRUE ~ 0),
-         w_partial = case_when(is.na(work_address) ~ 1,
+         w_partial = case_when(is.na(work_adr) & ((is.na(work_lat) | 
+                                                     is.na(work_long)) &
+                                                    (is.na(p_w_LAT) |
+                                                     is.na(p_w_LONG))
+                                                    ) ~ 1,
                                TRUE ~ 0)
   )
 ```
@@ -65,16 +199,16 @@ components of an address together, so let's put all three addresses on a single
 line.
 
 ```{r}
-all_add2 <- all_add1 %>% 
-  unite("curr_sla", c(current_address, current_city, current_state), 
+all_add3 <- all_add2 %>% 
+  unite("curr_sla", c(m_CURR_ADR, m_CURR_CPN, m_CURR_STATE), 
         sep=", ", remove = FALSE, na.rm = TRUE) %>%
-  unite("curr_slaz", c(curr_sla, current_zip), 
+  unite("curr_slaz", c(curr_sla, m_CURR_ZIP), 
         sep=" ", remove = FALSE, na.rm = TRUE) %>%
-  unite("prev_sla", c(prev_address, prev_city, prev_state), 
+  unite("prev_sla", c(prev_adr, prev_cpn, prev_state), 
         sep=", ", remove = FALSE, na.rm = TRUE) %>%
   unite("prev_slaz", c(prev_sla, prev_zip), 
         sep=" ", remove = FALSE, na.rm = TRUE) %>%
-  unite("work_sla", c(work_address, work_city), 
+  unite("work_sla", c(work_adr, work_cpn, work_state), 
         sep=", ", remove = FALSE, na.rm = TRUE) %>%
   unite("work_slaz", c(work_sla, work_zip), 
         sep=" ", remove = FALSE, na.rm = TRUE)
@@ -86,7 +220,7 @@ Street Map.
 
 ```{r}
 # Go back and try this with a single dataframe with piping
-gc1 <- all_add2 %>%
+gc1 <- all_add3 %>%
   geocode_combine(
     queries = list(
       list(method = 'census'),
@@ -123,7 +257,7 @@ gc3 <- gc2 %>%
 Let's save a copy of gc3 so that the survey team can review the addresses 
 that didn't geocode.
 ```{r}
-write_csv(gc3, "data/survey/geocode07-18-24.csv")
+write_csv(gc3, "data/survey/geocode08-20-24.csv")
 ```
 
 So the last thing to do here is create final coordinates columns for current,
@@ -133,41 +267,55 @@ location by dropping a pin in the map, the coordinates the respondent gave us.
 
 This is the logic we want to follow:
 
-1. If respondent provided a complete address, use the geocoded coordinates
+1. If there are manually entered coordinates, use those. This accounts for
+addresses that lack a street number but aren't considered partial.
+2. If respondent provided a complete address, use the geocoded coordinates
 (including if the respondent dropped a pin)
-2. If the respondent did not provide a complete address but dropped a pin, use
+3. If the respondent did not provide a complete address but dropped a pin, use
 the pin coordinates.
-3. If the respondent provided a complete address and dropped a pin, but we couldn't
+4. If the respondent provided a complete address and dropped a pin, but we couldn't
 geocode the complete address, use the pin coordinates.
-4. If the respondent did not provide a complete address and did not drop a pin,
+5. If the respondent did not provide a complete address and did not drop a pin,
 but we were able to geocode the incomplete address, use the geocoded coordinates
 
 ```{r}
 gc4 <- gc3 %>%
-  mutate(cc_lat = case_when(c_partial == 0 & is.na(cgc_lat) == FALSE ~ cgc_lat,
-                            c_partial == 1 & is.na(current_lat) == FALSE ~ current_lat,
-                            c_partial == 0 & is.na(cgc_lat) == TRUE & is.na(current_lat) == FALSE ~ current_lat,
-                            c_partial == 1 & is.na(current_lat) == TRUE & is.na(cgc_lat) == FALSE ~ cgc_lat,
+  mutate(cc_lat = case_when(!is.na(m_CURR_LAT) ~ m_CURR_LAT,
+                            c_partial == 0 & !is.na(cgc_lat) ~ cgc_lat,
+                            c_partial == 1 & !is.na(p_CURR_LAT) ~ p_CURR_LAT,
+                            c_partial == 0 & is.na(cgc_lat) & !is.na(p_CURR_LAT) ~ p_CURR_LAT,
+                            c_partial == 1 & is.na(p_CURR_LAT) & !is.na(cgc_lat) ~ cgc_lat,
                             TRUE ~ NA),
-         cc_lon = case_when(c_partial == 0 & is.na(cgc_lon) == FALSE ~ cgc_lon,
-                            c_partial == 1 & is.na(current_lon) == FALSE ~ current_lon,
-                            c_partial == 0 & is.na(cgc_lon) == TRUE & is.na(current_lon) == FALSE ~ current_lon,
-                            c_partial == 1 & is.na(current_lon) == TRUE & is.na(cgc_lon) == FALSE ~ cgc_lon,
+         cc_lon = case_when(!is.na(m_CURR_LONG) ~ m_CURR_LONG,
+                            c_partial == 0 & !is.na(cgc_lon) ~ cgc_lon,
+                            c_partial == 1 & !is.na(p_CURR_LONG) ~ p_CURR_LONG,
+                            c_partial == 0 & is.na(cgc_lon) & !is.na(p_CURR_LONG) ~ p_CURR_LONG,
+                            c_partial == 1 & is.na(p_CURR_LONG) & !is.na(cgc_lon) ~ cgc_lon,
                             TRUE ~ NA),
-         cp_lat = case_when(p_partial == 0 & is.na(pgc_lat) == FALSE ~ pgc_lat,
-                            p_partial == 1 & is.na(prev_lat) == FALSE ~ prev_lat,
-                            p_partial == 0 & is.na(pgc_lat) == TRUE & is.na(prev_lat) == FALSE ~ prev_lat,
-                            p_partial == 1 & is.na(prev_lat) == TRUE & is.na(pgc_lat) == FALSE ~ pgc_lat,
+         cp_lat = case_when(!is.na(prev_lat) ~ prev_lat,
+                            p_partial == 0 & !is.na(pgc_lat) ~ pgc_lat,
+                            p_partial == 1 & !is.na(p_prev_LAT) ~ p_prev_LAT,
+                            p_partial == 0 & is.na(pgc_lat) & !is.na(p_prev_LAT) ~ p_prev_LAT,
+                            p_partial == 1 & is.na(p_prev_LAT) & !is.na(pgc_lat) ~ pgc_lat,
                             TRUE ~ NA),
-         cp_lon = case_when(p_partial == 0 & is.na(pgc_lon) == FALSE ~ pgc_lon,
-                            p_partial == 1 & is.na(prev_lon) == FALSE ~ prev_lon,
-                            p_partial == 0 & is.na(pgc_lon) == TRUE & is.na(prev_lon) == FALSE ~ prev_lon,
-                            p_partial == 1 & is.na(prev_lon) == TRUE & is.na(pgc_lon) == FALSE ~ pgc_lon,
+         cp_lon = case_when(!is.na(prev_long) ~ prev_long,
+                            p_partial == 0 & !is.na(pgc_lon) ~ pgc_lon,
+                            p_partial == 1 & !is.na(p_prev_LONG) ~ p_prev_LONG,
+                            p_partial == 0 & is.na(pgc_lon) & !is.na(p_prev_LONG) ~ p_prev_LONG,
+                            p_partial == 1 & is.na(p_prev_LONG) & !is.na(pgc_lon) ~ pgc_lon,
                             TRUE ~ NA),
-         cw_lat = case_when(is.na(wgc_lat) == FALSE ~ wgc_lat, # We don't have pin drops for work addresses
+         cw_lat = case_when(!is.na(work_lat) ~ work_lat,
+                            w_partial == 0 & !is.na(wgc_lat) ~ wgc_lat,
+                            w_partial == 1 & !is.na(p_w_LAT) ~ p_w_LAT,
+                            w_partial == 0 & is.na(wgc_lat) & !is.na(p_w_LAT) ~ p_w_LAT,
+                            w_partial == 1 & is.na(p_w_LAT) & !is.na(wgc_lat) ~ wgc_lat,
                             TRUE ~ NA),
-         cw_lon = case_when(is.na(wgc_lon) == FALSE ~ wgc_lon,
-                            TRUE ~ NA)
+         cw_lon = case_when(!is.na(work_long) ~ work_long,
+                            w_partial == 0 & !is.na(wgc_lon) ~ wgc_lon,
+                            w_partial == 1 & !is.na(p_w_LONG) ~ p_w_LONG,
+                            w_partial == 0 & is.na(wgc_lon) & !is.na(p_w_LONG) ~ p_w_LONG,
+                            w_partial == 1 & is.na(p_w_LONG) & !is.na(wgc_lon) ~ wgc_lon,
+                            TRUE ~ NA),
   )
   
 ```
@@ -176,7 +324,7 @@ Now we just want to wittle down out dataframe to variables we need to integrate
 with WUI data in a different .Rmd file
 ```{r}
 gc5 <- gc4 %>%
-  select(id, c_partial, p_partial, w_partial, cc_lat, cc_lon, cp_lat, cp_lon,
+  select(ParentGlobalID, c_partial, p_partial, w_partial, cc_lat, cc_lon, cp_lat, cp_lon,
          cw_lat, cw_lon) %>%
   rename(curr_lat = cc_lat,
          curr_lon = cc_lon,

@@ -23,18 +23,18 @@ SF objects (current addresses, current + previous addresses, and current
 
 ```{r}
 curr_xy <- survey_xy %>%
-  select(id, c_partial, curr_lat, curr_lon) 
+  select(ParentGlobalID, c_partial, curr_lat, curr_lon) 
 
 #Get only complete cases because we can't project NA values
 curr_xy <- curr_xy[complete.cases(curr_xy), ]
 
 prev_xy <- survey_xy %>%
-  select(id, p_partial, prev_lat, prev_lon)
+  select(ParentGlobalID, p_partial, prev_lat, prev_lon)
 
 prev_xy <- prev_xy[complete.cases(prev_xy), ]
 
 work_xy <- survey_xy %>%
-  select(id, w_partial, work_lat, work_lon)
+  select(ParentGlobalID, w_partial, work_lat, work_lon)
 
 work_xy <- work_xy[complete.cases(work_xy), ]
 ```
@@ -46,16 +46,18 @@ p_points <- st_as_sf(prev_xy, coords = c('prev_lon', 'prev_lat'), crs = 4326)
 w_points <- st_as_sf(work_xy, coords = c('work_lon', 'work_lat'), crs = 4326)
 ```
 
+
 Import necessary polygon datasets
 ```{r}
 counties <- st_read("data/shapes/4county_boundaries.shp")
 places <- st_read("data/shapes/4county_places.shp")
 wui_bg <- st_read("data/shapes/wui_bg_demos1.geojson")
-wui_blks <- st_read("data/shapes/all_blocks_wui_demo1.geojson")
+wui_blks <- st_read("data/shapes/ca_wui_pro.geojson")
 ```
 
 Project our survey points into the same coordinate system as our polygons
 ```{r}
+
 c_points <- st_transform(c_points, st_crs(counties))
 st_crs(c_points) == st_crs(counties)
 
@@ -201,11 +203,12 @@ places_to_w_point1 <- places_to_w_point %>%
 ## Join WUI status to points (Block)
 
 Here, we want to determine whether a respondent lives, previously lives,
-or works in the WUI or not. To do this, let's create an sf object with 
-five variables: whether the block was in the WUI in 2020, whether the block was 
-intermix in 2020, whether the block was interface in 2020, whether the block was
-new WUI (extensive growth) in 2020, and block ID. We'll merge those variables 
-into our datasets of surveyor locations
+or works in the WUI (even outside our study area, but not necessarily outside
+CA). To do this, let's create an sf object with five variables: whether the 
+block was in the WUI in 2020, whether the block was intermix in 2020, whether 
+the block was interface in 2020, whether the block was new WUI 
+(extensive growth) in 2020, and block ID. We'll merge those variables into our 
+datasets of surveyor locations.
 
 ```{r}
 wui_status20 <- wui_blks %>%
@@ -330,10 +333,12 @@ w_addresses <- bg_to_w_point %>%
 ```
 
 Now let's join current addresses to previous addresses and current
-addresses to work addresses.
+addresses to work addresses, as well as all addresses to the same sf object
 ```{r}
-cp_addresses <- inner_join(p_addresses, as.data.frame(c_addresses), by = 'id')
-cw_addresses <- inner_join(w_addresses, as.data.frame(c_addresses), by = 'id')
+cp_addresses <- inner_join(p_addresses, as.data.frame(c_addresses), by = 'ParentGlobalID')
+cw_addresses <- inner_join(w_addresses, as.data.frame(c_addresses), by = 'ParentGlobalID')
+cpw_addresses <- full_join(c_addresses, as.data.frame(p_addresses), by = 'ParentGlobalID')
+cpw_addresses <- full_join(cpw_addresses, as.data.frame(w_addresses, by = 'ParentGlobalID'))
 ```
 
 # Aggregate to block, block group, and place
@@ -380,12 +385,12 @@ point_to_pl1 <- inner_join(places1, point_to_pl, by = "place")
 
 Now let's save our points and each of our polygon files as geojson.
 ```{r}
-st_write(c_addresses, "data/shapes/current_addresses_07-18-24.geojson")
-st_write(cp_addresses, "data/shapes/previous_addresses_07-18-24.geojson")
-st_write(cw_addresses, "data/shapes/work_addresses_07-18-24.geojson")
-st_write(point_to_blk1, "data/shapes/survey_blk_07-18-24.geojson")
-st_write(point_to_bg1, "data/shapes/survey_bg_07-18-24.geojson")
-st_write(point_to_pl1, "data/shapes/survey_pl_07-18-24.geojson")
+st_write(c_addresses, "data/shapes/current_addresses_08-20-24.geojson")
+st_write(cp_addresses, "data/shapes/previous_addresses_08-20-24.geojson")
+st_write(cw_addresses, "data/shapes/work_addresses_08-20-24.geojson")
+st_write(point_to_blk1, "data/shapes/survey_blk_08-20-24.geojson")
+st_write(point_to_bg1, "data/shapes/survey_bg_08-20-24.geojson")
+st_write(point_to_pl1, "data/shapes/survey_pl_08-20-24.geojson")
 ```
 
 Let's also take each of our address files, select variables to keep, drop the
@@ -393,19 +398,29 @@ geometry, and save them as CSV. These should go back into the main survey
 dataset being worked on.
 ```{r}
 c_addresses1 <- c_addresses %>%
-  select(id, c_partial, county, c_cnty_dist, c_inside_cnty, place, c_pl_dist, 
+  select(ParentGlobalID, c_partial, county, c_cnty_dist, c_inside_cnty, place, c_pl_dist, 
          c_pl_res, wui20, intermix20, interfac20, wui_new20, wui_bg, lint_hu,
          hint_hu, lint_pop, hint_pop) %>%
   st_drop_geometry()
 
 cp_addresses1 <- cp_addresses %>%
-  select(id, p_partial, p_county, p_cnty_dist, p_inside_cnty, p_place, p_pl_dist, 
+  select(ParentGlobalID, p_partial, p_county, p_cnty_dist, p_inside_cnty, p_place, p_pl_dist, 
          p_pl_res, p_wui20, p_intermix20, p_interfac20, p_wui_new20, p_wui_bg, p_lint_hu,
          p_hint_hu, p_lint_pop, p_hint_pop) %>%
   st_drop_geometry()
 
 cw_addresses1 <- cw_addresses %>%
-  select(id, w_partial, w_county, w_cnty_dist, w_inside_cnty, w_place, w_pl_dist, 
+  select(ParentGlobalID, w_partial, w_county, w_cnty_dist, w_inside_cnty, w_place, w_pl_dist, 
+         pl_work, w_wui20, w_intermix20, w_interfac20, w_wui_new20, w_wui_bg, w_lint_hu,
+         w_hint_hu, w_lint_pop, w_hint_pop) %>%
+  st_drop_geometry()
+
+cpw_addresses1 <- cpw_addresses %>%
+  select(ParentGlobalID, c_partial, county, c_cnty_dist, c_inside_cnty, place, c_pl_dist, 
+         c_pl_res, wui20, intermix20, interfac20, wui_new20, wui_bg, lint_hu,
+         hint_hu, lint_pop, hint_pop, p_partial, p_county, p_cnty_dist, p_inside_cnty, p_place, p_pl_dist, 
+         p_pl_res, p_wui20, p_intermix20, p_interfac20, p_wui_new20, p_wui_bg, p_lint_hu,
+         p_hint_hu, p_lint_pop, p_hint_pop, w_partial, w_county, w_cnty_dist, w_inside_cnty, w_place, w_pl_dist, 
          pl_work, w_wui20, w_intermix20, w_interfac20, w_wui_new20, w_wui_bg, w_lint_hu,
          w_hint_hu, w_lint_pop, w_hint_pop) %>%
   st_drop_geometry()
@@ -414,9 +429,10 @@ cw_addresses1 <- cw_addresses %>%
 
 Save each address file as CSV (these need work though)
 ```{r}
-write_csv(c_addresses1, "data/survey/curr_add_wui.csv")
-write_csv(cp_addresses1, "data/survey/prev_add_wui.csv")
-write_csv(cw_addresses1, "data/survey/work_add_wui.csv")
+#write_csv(c_addresses1, "data/survey/curr_add_wui.csv")
+#write_csv(cp_addresses1, "data/survey/prev_add_wui.csv")
+#write_csv(cw_addresses1, "data/survey/work_add_wui.csv")
+write_csv(cpw_addresses1, "data/survey/all_address_wui.csv")
 ```
 
 
