@@ -213,7 +213,8 @@ datasets of surveyor locations.
 
 ```{r}
 wui_status20 <- wui_blks %>%
-  select(BLK20, wui20, intermix20, interfac20, wui_new20)
+  select(BLK20, wui20, intermix20, interfac20, wui_new20, high_den20, med_den20,
+         low_den20)
 ```
 
 Let's join points to blocks. This will tell us which points are assigned to
@@ -310,7 +311,10 @@ p_addresses <- bg_to_p_point %>%
          p_lint_hu = lint_hu,
          p_hint_hu = hint_hu,
          p_lint_pop = lint_pop,
-         p_hint_pop = hint_pop
+         p_hint_pop = hint_pop,
+         p_high_den20 = high_den20,
+         p_med_den20 = med_den20,
+         p_low_den20 = low_den20
   )
 
 w_addresses <- bg_to_w_point %>%
@@ -328,7 +332,10 @@ w_addresses <- bg_to_w_point %>%
          w_lint_hu = lint_hu,
          w_hint_hu = hint_hu,
          w_lint_pop = lint_pop,
-         w_hint_pop = hint_pop
+         w_hint_pop = hint_pop,
+         w_high_den20 = high_den20,
+         w_med_den20 = med_den20,
+         w_low_den20 = low_den20
   )
 
 ```
@@ -401,29 +408,32 @@ dataset being worked on.
 c_addresses1 <- c_addresses %>%
   select(ParentGlobalID, c_partial, county, c_cnty_dist, c_inside_cnty, place, c_pl_dist, 
          c_pl_res, wui20, intermix20, interfac20, wui_new20, wui_bg, lint_hu,
-         hint_hu, lint_pop, hint_pop) %>%
+         hint_hu, lint_pop, hint_pop, high_den20, med_den20, low_den20) %>%
   st_drop_geometry()
 
 cp_addresses1 <- cp_addresses %>%
   select(ParentGlobalID, p_partial, p_county, p_cnty_dist, p_inside_cnty, p_place, p_pl_dist, 
          p_pl_res, p_wui20, p_intermix20, p_interfac20, p_wui_new20, p_wui_bg, p_lint_hu,
-         p_hint_hu, p_lint_pop, p_hint_pop) %>%
+         p_hint_hu, p_lint_pop, p_hint_pop, p_high_den20, p_med_den20, p_low_den20) %>%
   st_drop_geometry()
 
 cw_addresses1 <- cw_addresses %>%
   select(ParentGlobalID, w_partial, w_county, w_cnty_dist, w_inside_cnty, w_place, w_pl_dist, 
          pl_work, w_wui20, w_intermix20, w_interfac20, w_wui_new20, w_wui_bg, w_lint_hu,
-         w_hint_hu, w_lint_pop, w_hint_pop) %>%
+         w_hint_hu, w_lint_pop, w_hint_pop, w_high_den20, w_med_den20, w_low_den20) %>%
   st_drop_geometry()
 
 cpw_addresses1 <- cpw_addresses %>%
   select(ParentGlobalID, c_partial, county, c_cnty_dist, c_inside_cnty, place, c_pl_dist, 
          c_pl_res, wui20, intermix20, interfac20, wui_new20, wui_bg, lint_hu,
-         hint_hu, lint_pop, hint_pop, p_partial, p_county, p_cnty_dist, p_inside_cnty, p_place, p_pl_dist, 
-         p_pl_res, p_wui20, p_intermix20, p_interfac20, p_wui_new20, p_wui_bg, p_lint_hu,
-         p_hint_hu, p_lint_pop, p_hint_pop, w_partial, w_county, w_cnty_dist, w_inside_cnty, w_place, w_pl_dist, 
-         pl_work, w_wui20, w_intermix20, w_interfac20, w_wui_new20, w_wui_bg, w_lint_hu,
-         w_hint_hu, w_lint_pop, w_hint_pop) %>%
+         high_den20, med_den20, low_den20, hint_hu, lint_pop, hint_pop, 
+         p_partial, p_county, p_cnty_dist, p_inside_cnty, p_place, p_pl_dist, 
+         p_pl_res, p_wui20, p_intermix20, p_interfac20, p_wui_new20, p_wui_bg, 
+         p_lint_hu, p_hint_hu, p_lint_pop, p_hint_pop, w_partial, w_county, 
+         w_cnty_dist, w_inside_cnty, w_place, w_pl_dist, p_high_den20, 
+         p_med_den20, p_low_den20, pl_work, w_wui20, w_intermix20, w_interfac20,
+         w_wui_new20, w_wui_bg, w_lint_hu, w_hint_hu, w_lint_pop, w_hint_pop, 
+         w_high_den20, w_med_den20, w_low_den20) %>%
   st_drop_geometry()
 ```
 
