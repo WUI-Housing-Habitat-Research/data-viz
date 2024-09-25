@@ -54,6 +54,7 @@ counties <- st_read("data/shapes/4county_boundaries.shp")
 places <- st_read("data/shapes/4county_places.shp")
 wui_bg <- st_read("data/shapes/wui_bg_demos1.geojson")
 wui_blks <- st_read("data/shapes/ca_wui_pro.geojson")
+sc_usl <- st_read("data/shapes/santa_cruz_urban_services_line.geojson")
 ```
 
 Project our survey points into the same coordinate system as our polygons
@@ -201,6 +202,27 @@ places_to_w_point1 <- places_to_w_point %>%
 
 ```
 
+## Determine whether points are inside the Santa Cruz County urban services line
+
+Convert urban service line CRS to same as our point data
+```{r}
+sc_usl <- st_transform(sc_usl, st_crs(places_to_c_point1))
+st_crs(places_to_c_point1) == st_crs(sc_usl)
+```
+
+```{r}
+usl_to_c_point <- places_to_c_point1
+usl_to_p_point <- places_to_p_point1
+usl_to_w_point <- places_to_w_point1
+
+usl_to_c_point$sc_usl = case_when(st_intersects(usl_to_c_point, sc_usl, sparse = F) ~ 1,
+                                  TRUE ~ 0)
+usl_to_p_point$sc_usl = case_when(st_intersects(usl_to_p_point, sc_usl, sparse = F) ~ 1,
+                                  TRUE ~ 0)
+usl_to_w_point$sc_usl = case_when(st_intersects(usl_to_w_point, sc_usl, sparse = F) ~ 1,
+                                  TRUE ~ 0)
+```
+
 ## Join WUI status to points (Block)
 
 Here, we want to determine whether a respondent lives, previously lives,
@@ -220,9 +242,9 @@ wui_status20 <- wui_blks %>%
 Let's join points to blocks. This will tell us which points are assigned to
 which blocks and their associated WUI status.
 ```{r}
-places_to_c_point2 <- st_join(places_to_c_point1, wui_status20)
-places_to_p_point2 <- st_join(places_to_p_point1, wui_status20)
-places_to_w_point2 <- st_join(places_to_w_point1, wui_status20)
+places_to_c_point2 <- st_join(usl_to_c_point, wui_status20)
+places_to_p_point2 <- st_join(usl_to_p_point, wui_status20)
+places_to_w_point2 <- st_join(usl_to_w_point, wui_status20)
 ```
 
 ## Join growth WUI status to points (Block Group)
