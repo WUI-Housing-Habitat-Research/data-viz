@@ -257,7 +257,7 @@ gc3 <- gc2 %>%
 Let's save a copy of gc3 so that the survey team can review the addresses 
 that didn't geocode.
 ```{r}
-write_csv(gc3, "data/survey/geocode08-23-24.csv")
+write_csv(gc3, "data/survey/geocode09-06-24.csv")
 ```
 
 So the last thing to do here is create final coordinates columns for current,
